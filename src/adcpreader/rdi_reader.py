@@ -10,6 +10,8 @@ from adcpreader import __VERSION__
 from adcpreader.coroutine import coroutine, Coroutine
 
 
+logger = logging.getLogger(__name__)
+
 ENSEMBLE_VARIABLES = """Ensnum RTC Ensmsb BITResult Soundspeed XdcrDepth
 Heading Pitch Roll Salin Temp MPT Hdg_SD Pitch_SD 
 Roll_SD ADC ErrorStatus Press PressVar RTCY2K Velocity1
@@ -184,9 +186,9 @@ class Ensemble(object):
                 data['bottom_track'] = self.decode_bottom_track(n_beams)
             elif block_id == 0x2202:
                 data['nav']=None
-                logging.debug("Decoding nav: TODO")
+                logger.debug("Decoding nav: TODO")
             else:
-                logging.info("Decoding block_id %08x not implemented."%(block_id))
+                logger.info("Decoding block_id %08x not implemented."%(block_id))
         return data
 
     #### Helper functions ####
@@ -494,9 +496,10 @@ class PD0(Coroutine):
         if True, adds Timestamp field to variable_leader containing time as unix time.
     '''
 
-    def __init__(self, add_unix_timestamp=True, baseyear=2000):
+    def __init__(self, add_unix_timestamp=True, add_filename=True, baseyear=2000):
         super().__init__()
         self.add_unix_timestamp = add_unix_timestamp
+        self.add_filename = add_filename
         self.baseyear = baseyear
 
     def __enter__(self):
@@ -505,38 +508,7 @@ class PD0(Coroutine):
     def __exit__(self, type, value, tb):
         if type is None:
             self.close_coroutine()
-            
-    def get_info(self, filename):
-        ''' Get start/end end size information of a PD0 file
-
-        Parameters
-        ----------
-        filename : string
-            filename or path pointing to PD0 file
-
-        Returns
-        -------
-        time_start : float
-            time of first ensemble
-        time_end : float
-            time of last ensemble
-        number_of_ensembles : int
-            number of ensembles present in this file.
-        '''
-        # read the first ensemble (only)
-        for ens in self.ensemble_generator_per_file(filename):
-            break
-        block_size = self.size_of_ensemble
-        time_start = ens['variable_leader']['Timestamp']
-        num_start = ens['variable_leader']['Ensnum']
-        # read last ensemble
-        for ens in self.ensemble_generator_per_file(filename, fd_offset = -block_size):
-            break
-        time_end = ens['variable_leader']['Timestamp']
-        num_end = ens['variable_leader']['Ensnum']
-        number_of_ensembles = num_end-num_start + 1 # add one because of reading the first
-        return time_start, time_end, number_of_ensembles
-        
+                    
     def ensemble_generator_per_file(self, filename, fd_offset = None):
         ''' Generator returning ensembles for a single filename.
         
@@ -567,27 +539,31 @@ class PD0(Coroutine):
                     whence = 0
                 fd.seek(fd_offset, whence) # move file descriptor to required position
             data = fd.read(buffer_size)
-            is_fd_consumed = len(data)<buffer_size
+            if len(data) == 0:
+                # Trying to read an empty file.
+                raise ValueError("Trying to read a file with zero size.")
+            eof = len(data)<buffer_size
             while True:
                 # data should be big enough to contain HEXF7F7 id and
                 # checksum offset
                 data, is_fd_consumed = self.read_data_as_needed(fd, data, 8, buffer_size)
-
+                eof |= is_fd_consumed
                 idx = data.find(HEX7F7F)
-                if idx == -1 and is_fd_consumed:
+                if idx == -1 and eof:
                     break # we're done.
-                if idx == -1 and not is_fd_consumed:
+                if idx == -1 and not eof:
                     raise ValueError('Could not find start ID in data, but the file has still data to process.\nThis is unexpected behaviour. FIX ME.')
                 checksum_offset = self.get_word(data, idx+2)
                 idx_next = idx + checksum_offset + SIZE_CHECKSUM
                 
                 # data should be big enough to contain idx +checksum_offset + size_checksum
                 data, is_fd_consumed = self.read_data_as_needed(fd, data, idx_next, buffer_size)
-                
+                eof |= is_fd_consumed
                 checksum = self.get_word(data, idx + checksum_offset)
-                if not self.crc_check(data, idx, checksum_offset, checksum):
-                    logging.debug("CRC mismatch at 0x%x"%(idx))
-                    continue
+                crc_check = self.crc_check(data, idx, checksum_offset, checksum)
+                if not crc_check:
+                    logger.warning("CRC mismatch at 0x%x"%(idx))
+                    break
 
                 ensemble = Ensemble(data[idx:idx_next]).decode()
                 self.size_of_ensemble = idx_next-idx
@@ -596,6 +572,8 @@ class PD0(Coroutine):
                 if self.add_unix_timestamp:
                     tm = get_ensemble_time(ensemble, self.baseyear)
                     ensemble['variable_leader']['Timestamp'] = tm
+                if self.add_filename:
+                    ensemble['fixed_leader']['Filename'] = filename
                 yield ensemble
                 
         
@@ -685,3 +663,38 @@ class PD0(Coroutine):
         crc %= 0x10000
         return crc == checksum
 
+def get_info(filename):
+    ''' Get start/end end size information of a PD0 file
+
+    Parameters
+    ----------
+    filename : string
+        filename or path pointing to PD0 file
+
+    Returns
+    -------
+    time_start : float
+        time of first ensemble
+    time_end : float
+        time of last ensemble
+    number_of_ensembles : int
+        number of ensembles present in this file.
+    '''
+    pd0 = PD0()
+    # read the first ensemble (only)
+    logger.debug("About to read first ensemble...")
+    for ens in pd0.ensemble_generator_per_file(filename):
+        break
+    logger.debug("First ensemble read.")
+    block_size = pd0.size_of_ensemble
+    time_start = ens['variable_leader']['Timestamp']
+    num_start = ens['variable_leader']['Ensnum']
+    # read last ensemble
+    logger.debug("About to read last ensemble...")
+    for ens in pd0.ensemble_generator_per_file(filename, fd_offset = -block_size):
+        break
+    logger.debug("Last ensemble read.")
+    time_end = ens['variable_leader']['Timestamp']
+    num_end = ens['variable_leader']['Ensnum']
+    number_of_ensembles = num_end-num_start + 1 # add one because of reading the first
+    return time_start, time_end, number_of_ensembles

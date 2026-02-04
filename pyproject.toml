@@ -1,14 +1,24 @@
 [project]
 name = "adcpreader"
-version = "0.1.0"
+version = "0.3.0"
 description = "adcpreader: a python module for reading and processing RDI ADCP data files."
 readme = "README.md"
 authors = [
     { name = "Lucas Merckelbach", email = "lucas.merckelbach@hereon.de" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "gsw>=3.6.20",
+    "netcdf4>=1.7.4",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.26,<0.10.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "dbdreader>=0.5.8",
+    "ipython>=9.10.0",
+    "matplotlib>=3.10.8",
+]
