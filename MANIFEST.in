@@ -1,3 +1,0 @@
-include data/*.PD0
-include examples/*.py
-include adcpreader/*.py
