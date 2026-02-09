@@ -562,7 +562,7 @@ class PD0(Coroutine):
                 checksum = self.get_word(data, idx + checksum_offset)
                 crc_check = self.crc_check(data, idx, checksum_offset, checksum)
                 if not crc_check:
-                    logger.warning("CRC mismatch at 0x%x"%(idx))
+                    logger.warning(f"CRC mismatch at {idx:0x} of {filename}")
                     break
 
                 ensemble = Ensemble(data[idx:idx_next]).decode()

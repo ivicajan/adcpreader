@@ -1,4 +1,5 @@
 import re
+import logging
 
 import numpy as np
 
@@ -6,6 +7,7 @@ from adcpreader import __VERSION__
 
 from adcpreader.coroutine import coroutine, Coroutine
 
+logger =logging.getLogger(__name__)
 
 # default setting for if true, all ensembles that have all data
 # blanked out because of some quality check will silently be dropped.
@@ -290,31 +292,41 @@ class SNRLimit(QualityControl):
 
     where :math:`E` is the echo intensity in dB, and :math:`E0` the noise floor.
 
+    Adds the following entries to the ensemble
+
+    ens["echo"]["SNR{1,2,3,4}" containing a vector of the SNR.
+
     '''
     
-    def __init__(self, SNR_limit = 10, noise_floor_db = 26.1):
+    def __init__(self, SNR_limit = 10, noise_floor_db = 26.1, use_AVG=False):
         super().__init__()
         self.SNR_limit = SNR_limit
         self.noise_floor_db = noise_floor_db
-
+        self.use_AVG = use_AVG
+        
     def SNR(self, echointensity):
-        return 10**((echointensity-self.noise_floor_db)/10)
+        snr = 10**((echointensity-self.noise_floor_db)/10)
+        return snr
     
     def check_ensemble(self, ens):
         ''' '''
         nbeams = ens['fixed_leader']['N_Beams']
         s = ["Echo%d"%(i+1) for i in range(nbeams)]
+        s += ['Echo_AVG']
         SNR = [self.SNR(ens['echo'][_s])  for _s in s]
-        for i,snr in enumerate(SNR):
-            if i:
+        condition = np.full_like(SNR[0], False, dtype=bool)
+        for snr, channel in zip(SNR, s):
+            if self.use_AVG and channel == 'Echo_AVG':
                 condition|= snr < self.SNR_limit
-            else:
-                condition = snr < self.SNR_limit
+            elif not self.use_AVG and channel != 'Echo_AVG':
+                condition|= snr < self.SNR_limit
+                
         for i in range(nbeams):
             s="Velocity%d"%(i+1)
             ens['velocity'][s] = self.apply_condition(condition, ens['velocity'][s])
             s="SNR%d"%(i+1)
             ens['echo'][s] = SNR[i]
+        ens['echo']['SNR_AVG'] = SNR[-1]
         return True # always return the ensemble
 
 
