@@ -539,42 +539,41 @@ class PD0(Coroutine):
                     whence = 0
                 fd.seek(fd_offset, whence) # move file descriptor to required position
             data = fd.read(buffer_size)
-            if len(data) == 0:
-                # Trying to read an empty file.
-                raise ValueError("Trying to read a file with zero size.")
-            eof = len(data)<buffer_size
-            while True:
-                # data should be big enough to contain HEXF7F7 id and
-                # checksum offset
-                data, is_fd_consumed = self.read_data_as_needed(fd, data, 8, buffer_size)
-                eof |= is_fd_consumed
-                idx = data.find(HEX7F7F)
-                if idx == -1 and eof:
-                    break # we're done.
-                if idx == -1 and not eof:
-                    raise ValueError('Could not find start ID in data, but the file has still data to process.\nThis is unexpected behaviour. FIX ME.')
-                checksum_offset = self.get_word(data, idx+2)
-                idx_next = idx + checksum_offset + SIZE_CHECKSUM
-                
-                # data should be big enough to contain idx +checksum_offset + size_checksum
-                data, is_fd_consumed = self.read_data_as_needed(fd, data, idx_next, buffer_size)
-                eof |= is_fd_consumed
-                checksum = self.get_word(data, idx + checksum_offset)
-                crc_check = self.crc_check(data, idx, checksum_offset, checksum)
-                if not crc_check:
-                    logger.warning(f"CRC mismatch at {idx:0x} of {filename}")
-                    break
+            if len(data) > 0:
+                eof = len(data)<buffer_size
+                while True:
+                    # data should be big enough to contain HEXF7F7 id and
+                    # checksum offset
+                    data, is_fd_consumed = self.read_data_as_needed(fd, data, 8, buffer_size)
+                    eof |= is_fd_consumed
+                    idx = data.find(HEX7F7F)
+                    if idx == -1 and eof:
+                        break # we're done.
+                    if idx == -1 and not eof:
+                        raise ValueError('Could not find start ID in data, but the file has still data to process.\nThis is unexpected behaviour. FIX ME.')
+                    checksum_offset = self.get_word(data, idx+2)
+                    idx_next = idx + checksum_offset + SIZE_CHECKSUM
 
-                ensemble = Ensemble(data[idx:idx_next]).decode()
-                self.size_of_ensemble = idx_next-idx
-                # strip returned data from data...
-                data = data[idx_next:]
-                if self.add_unix_timestamp:
-                    tm = get_ensemble_time(ensemble, self.baseyear)
-                    ensemble['variable_leader']['Timestamp'] = tm
-                if self.add_filename:
-                    ensemble['fixed_leader']['Filename'] = filename
-                yield ensemble
+                    # data should be big enough to contain idx +checksum_offset + size_checksum
+                    data, is_fd_consumed = self.read_data_as_needed(fd, data, idx_next, buffer_size)
+                    eof |= is_fd_consumed
+                    checksum = self.get_word(data, idx + checksum_offset)
+                    crc_check = self.crc_check(data, idx, checksum_offset, checksum)
+                    if not crc_check:
+                        logger.warning(f"CRC mismatch at {idx:0x} of {filename}")
+                        break
+
+                    ensemble = Ensemble(data[idx:idx_next]).decode()
+                    self.size_of_ensemble = idx_next-idx
+                    # strip returned data from data...
+                    data = data[idx_next:]
+                    if self.add_unix_timestamp:
+                        tm = get_ensemble_time(ensemble, self.baseyear)
+                        ensemble['variable_leader']['Timestamp'] = tm
+                    if self.add_filename:
+                        ensemble['fixed_leader']['Filename'] = filename
+                    yield ensemble
+                
                 
         
     def ensemble_generator(self, f):
@@ -691,10 +690,15 @@ def get_info(filename):
     num_start = ens['variable_leader']['Ensnum']
     # read last ensemble
     logger.debug("About to read last ensemble...")
-    for ens in pd0.ensemble_generator_per_file(filename, fd_offset = -block_size):
-        break
+    #for ens in pd0.ensemble_generator_per_file(filename, fd_offset = -block_size):
+    #    break
+    for ens in pd0.ensemble_generator_per_file(filename):
+        pass
     logger.debug("Last ensemble read.")
     time_end = ens['variable_leader']['Timestamp']
     num_end = ens['variable_leader']['Ensnum']
     number_of_ensembles = num_end-num_start + 1 # add one because of reading the first
-    return time_start, time_end, number_of_ensembles
+    with open(filename) as fp:
+        file_size = fp.seek(0, 2)
+    potential_number_of_ensembles = file_size // block_size
+    return time_start, time_end, number_of_ensembles, potential_number_of_ensembles

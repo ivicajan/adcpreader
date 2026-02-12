@@ -1,5 +1,5 @@
 import logging
-import glob
+import pathlib
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,18 +12,21 @@ logging.getLogger("adcpreader.rdi_reader").setLevel(logging.WARNING)
 mounted_pitch=11*np.pi/180
 
 
-# look for many files 
-filenames = glob.glob("*.pd0")
+# look for many files
+path = pathlib.Path("/home/lucas/gliderdata/foxstorm0825/dvl/echo")
+filenames = list(path.glob("YH*.pd0"))
 filenames.sort()
 
 valid_files = []
 for i, fn in enumerate(filenames):
     try:
-        print(i, *adcpreader.rdi_reader.get_info(fn))
+        print(i, fn, *adcpreader.rdi_reader.get_info(fn))
     except ValueError:
         print(f"File {i} could not be read.")
     else:
         valid_files.append(fn)
+
+valid_files = ["/home/lucas/gliderdata/foxstorm0825/dvl/echo/YH291723.pd0"]
 
 
 
