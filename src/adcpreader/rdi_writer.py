@@ -27,7 +27,8 @@ PARAMETERS = dict(fixed_leader = 'CPU_ver CPU_rev Sys_Freq Beam_Pattern Sensor_C
                   correlation = 'Corr1 Corr2 Corr3 Corr4 Corr_AVG'.split(),
                   echo = 'Echo1 Echo2 Echo3 Echo4 Echo_AVG'.split(),
                   percent_good = 'PG1 PG2 PG3 PG4'.split(),
-                  bottom_track = 'PPE Delay CorrMin AmpMin PGMin Mode ErrVelMax Range1 Range2 Range3 Range4 BTVel1 BTVel2 BTVel3 BTVel4 Corr1 Corr2 Corr3 Corr4 Amp1 Amp2 Amp3 Amp4 PG1 PG2 PG3 PG4 ReflMin ReflNear ReflFar ReflVel1 ReflVel2 ReflVel3 ReflVel4 ReflCorr1 ReflCorr2 ReflCorr3 ReflCorr4 ReflInt1 ReflInt2 ReflInt3 ReflInt4 ReflPG1 ReflPG2 ReflPG3 ReflPG4 BTdepthMax RSSI1 RSSI2 RSSI3 RSSI4 Gain'.split())
+                  bottom_track = 'PPE Delay CorrMin AmpMin PGMin Mode ErrVelMax Range1 Range2 Range3 Range4 BTVel1 BTVel2 BTVel3 BTVel4 Corr1 Corr2 Corr3 Corr4 Amp1 Amp2 Amp3 Amp4 PG1 PG2 PG3 PG4 ReflMin ReflNear ReflFar ReflVel1 ReflVel2 ReflVel3 ReflVel4 ReflCorr1 ReflCorr2 ReflCorr3 ReflCorr4 ReflInt1 ReflInt2 ReflInt3 ReflInt4 ReflPG1 ReflPG2 ReflPG3 ReflPG4 BTdepthMax RSSI1 RSSI2 RSSI3 RSSI4 Gain'.split(),
+                  vmdas_nav = 'FirstLat FirstLon LastLat LastLon AvgSpeed AvgTrackTrue AvgTrackMagnetic SpeedMadeGood DirMadeGood UTC_Time_First UTC_Time_Last Flags PCClockOffset'.split())
 
 # Parameters that may get added during processing (not present in RDI format):
 PARAMETERS['variable_leader']+=['Timestamp']
@@ -40,7 +41,8 @@ DEFAULT_PARAMETERS = dict(velocity = PARAMETERS['velocity'],
                           percent_good = PARAMETERS['percent_good'],
                           echo = PARAMETERS['echo'],
                           variable_leader = 'Timestamp Ensnum Soundspeed XdcrDepth Heading Pitch Roll Salin Temp'.split(),
-                          bottom_track = 'BTVel1 BTVel2 BTVel3 BTVel4 PG1 PG2 PG3 PG4 Range1 Range2 Range3 Range4'.split(),  
+                          bottom_track = 'BTVel1 BTVel2 BTVel3 BTVel4 PG1 PG2 PG3 PG4 Range1 Range2 Range3 Range4'.split(),
+                          vmdas_nav = 'FirstLat FirstLon LastLat LastLon AvgSpeed AvgTrackTrue SpeedMadeGood DirMadeGood Flags'.split(),
                           fixed_leader = 'Sys_Freq Xdcr_Facing N_Beams N_Cells N_PingsPerEns DepthCellSize Blank CoordXfrm WaterMode FirstBin SystemSerialNumber OriginalCoordXfrm'.split(),
                           )
 
@@ -72,13 +74,17 @@ class AddFixedLeaderParameter(Coroutine):
 class Writer(Coroutine):
     YEAR = 2000
     
-    def __init__(self, has_bottom_track=True): # some sections that are not necessisarily present
+    def __init__(self, has_bottom_track=True, has_vmdas_nav=False): # some sections that are not necessisarily present
         super().__init__()
         self.writeable_sections = list(DEFAULT_SECTIONS)
         if has_bottom_track and (not "bottom_track" in self.writeable_sections):
             self.writeable_sections.append("bottom_track")
         elif not has_bottom_track and ("bottom_track" in self.writeable_sections):
             self.writeable_sections.remove("bottom_track")
+        if has_vmdas_nav and (not "vmdas_nav" in self.writeable_sections):
+            self.writeable_sections.append("vmdas_nav")
+        elif not has_vmdas_nav and ("vmdas_nav" in self.writeable_sections):
+            self.writeable_sections.remove("vmdas_nav")
         self.is_context_manager = False
         self.__set_parameter_list()
 
@@ -152,7 +158,7 @@ class Writer(Coroutine):
         '''
         if section=='fixed_leader':
             dtype='config'
-        elif section=='variable_leader' or section=='bottom_track':
+        elif section in ('variable_leader', 'bottom_track', 'vmdas_nav'):
             dtype='scalar'
         else:
             dtype='vector'
@@ -290,7 +296,7 @@ class Writer(Coroutine):
         self.parameters = dict(config=[], scalar=[], vector=[])
         for k in DEFAULT_PARAMETERS['fixed_leader']:
             self.parameters['config'].append(('fixed_leader',k))
-        for s in ['variable_leader', 'bottom_track']:
+        for s in ['variable_leader', 'bottom_track', 'vmdas_nav']:
             if s in DEFAULT_PARAMETERS:
                 for k in DEFAULT_PARAMETERS[s]:
                     self.parameters['scalar'].append((s,k))
@@ -368,20 +374,34 @@ class NetCDFWriter(Writer):
                                          Range1 = ('f4', 'onedim', 'm'),
                                          Range2 = ('f4', 'onedim', 'm'),
                                          Range3 = ('f4', 'onedim', 'm'),
-                                         Range4 = ('f4', 'onedim', 'm'))
+                                         Range4 = ('f4', 'onedim', 'm')),
+                     #
+                     vmdas_nav = dict(FirstLat = ('f8', 'onedim', 'degrees_north'),
+                                      FirstLon = ('f8', 'onedim', 'degrees_east'),
+                                      LastLat = ('f8', 'onedim', 'degrees_north'),
+                                      LastLon = ('f8', 'onedim', 'degrees_east'),
+                                      AvgSpeed = ('f4', 'onedim', 'm/s'),
+                                      AvgTrackTrue = ('f4', 'onedim', 'deg'),
+                                      AvgTrackMagnetic = ('f4', 'onedim', 'deg'),
+                                      SpeedMadeGood = ('f4', 'onedim', 'm/s'),
+                                      DirMadeGood = ('f4', 'onedim', 'deg'),
+                                      UTC_Time_First = ('f8', 'onedim', 'ms'),
+                                      UTC_Time_Last = ('f8', 'onedim', 'ms'),
+                                      Flags = ('i4', 'onedim', '-'),
+                                      PCClockOffset = ('i4', 'onedim', 'ms'))
                      )
     
-    def __init__(self, output_file=None, ensemble_size_limit=None, has_bottom_track=True):
+    def __init__(self, output_file=None, ensemble_size_limit=None, has_bottom_track=True, has_vmdas_nav=False):
         ''' Constructor
 
         Parameters:
         -----------
         output_file: string representing the output filename
-        ensemble_size_limit: integer | None limiting the number of ensembles to be written into 
+        ensemble_size_limit: integer | None limiting the number of ensembles to be written into
                              a single netcdf file. None or 0 means no limit (one file will be written).
         '''
-        
-        super().__init__(has_bottom_track=has_bottom_track)
+
+        super().__init__(has_bottom_track=has_bottom_track, has_vmdas_nav=has_vmdas_nav)
         self.ensemble_size_limit = ensemble_size_limit
         self.file_counter = 0
         self.ensemble_counter = 0
@@ -536,17 +556,17 @@ class AsciiWriter(Writer):
                     "Ship" :"Starboard current-Forward current-Upward current-Error velocity".split("-"),
                     "Instrument": "Current in x direction-Current in y direction-Current in z direction-error velocity".split("-")}
                     
-    def __init__(self, output_file = sys.stdout, adcp_offset=0, has_bottom_track=True):
+    def __init__(self, output_file = sys.stdout, adcp_offset=0, has_bottom_track=True, has_vmdas_nav=False):
         '''AsciiWriter
-        
+
         Parameters:
         -----------
         output_file: a file pointer of filename (default sys.stdout)
         adcp_offset: the distance in m that the profile data should be offset by
 
         '''
-        
-        super().__init__(has_bottom_track=has_bottom_track)
+
+        super().__init__(has_bottom_track=has_bottom_track, has_vmdas_nav=has_vmdas_nav)
         self.comment = "#"
         self.adcp_offset = adcp_offset
         self.coro_fun = self.coro_write_ensembles(output_file)
@@ -591,8 +611,8 @@ class AsciiWriter(Writer):
                 
 class DataStructure(Writer):
     ''' Simple in memory data structure '''
-    def __init__(self, has_bottom_track=True):
-        super().__init__(has_bottom_track=has_bottom_track)
+    def __init__(self, has_bottom_track=True, has_vmdas_nav=False):
+        super().__init__(has_bottom_track=has_bottom_track, has_vmdas_nav=has_vmdas_nav)
         self.data = defaultdict(list)
         self.config = defaultdict(list)
         self.coro_fun = self.coro_write_ensembles(fd=None)

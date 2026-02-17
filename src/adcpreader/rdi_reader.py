@@ -13,10 +13,13 @@ from adcpreader.coroutine import coroutine, Coroutine
 logger = logging.getLogger(__name__)
 
 ENSEMBLE_VARIABLES = """Ensnum RTC Ensmsb BITResult Soundspeed XdcrDepth
-Heading Pitch Roll Salin Temp MPT Hdg_SD Pitch_SD 
+Heading Pitch Roll Salin Temp MPT Hdg_SD Pitch_SD
 Roll_SD ADC ErrorStatus Press PressVar RTCY2K Velocity1
 Velocity2 Velocity3 Velocity4 Corr1 Corr2 Corr3 Corr4
-Corr_AVG Echo1 Echo2 Echo3 Echo4 Echo_AVG PG1 PG2 PG3 PG4""".split()
+Corr_AVG Echo1 Echo2 Echo3 Echo4 Echo_AVG PG1 PG2 PG3 PG4
+FirstLat FirstLon LastLat LastLon AvgSpeed AvgTrackTrue
+AvgTrackMagnetic SpeedMadeGood DirMadeGood
+UTC_Time_First UTC_Time_Last Flags""".split()
 
 HEX7F7F = b'\x7f\x7f' # ENSEMBLE START ID
 
@@ -77,7 +80,7 @@ HRI["Sensors"]      = 0,8, ["Uses EU from transducer temperature sensor",
 
 # data are stored as by, word (unsigned short), short and unsigned integer.
 # the VARIABLE_DEFS dictionary lists the corresponding bit size and decode character.
-VARIABLE_DEFS=dict(byte=(1,'B'), word=(2,'H'), short=(2,'h'), uint = (4,'I'))
+VARIABLE_DEFS=dict(byte=(1,'B'), word=(2,'H'), short=(2,'h'), uint = (4,'I'), sint=(4,'i'))
 
 
 def RTC_to_unixtime(rtc_tuple, baseyear=2000):
@@ -184,6 +187,8 @@ class Ensemble(object):
                 data['percent_good'] = self.decode_percent_good(n_cells, n_beams)
             elif block_id == 0x0600:
                 data['bottom_track'] = self.decode_bottom_track(n_beams)
+            elif block_id == 0x2000:
+                data['vmdas_nav'] = self.decode_vmdas_nav()
             elif block_id == 0x2202:
                 data['nav']=None
                 logger.debug("Decoding nav: TODO")
@@ -225,12 +230,20 @@ class Ensemble(object):
         return self.get('short', idx, n)
 
     def get_uint(self, idx=None, n=1):
-        ''' helper function to read a unsigned integer (4 bytes). 
+        ''' helper function to read a unsigned integer (4 bytes).
         if idx is given, it will be read from this position
         else the field following the last read is used.
         if n is given, then this number of words will be read.
         '''
         return self.get('uint', idx, n)
+
+    def get_sint(self, idx=None, n=1):
+        ''' helper function to read a signed integer (4 bytes).
+        if idx is given, it will be read from this position
+        else the field following the last read is used.
+        if n is given, then this number of words will be read.
+        '''
+        return self.get('sint', idx, n)
     
     def get(self, dtype, idx=None, n=1):
         ''' helper function, not to be called directly. '''
@@ -459,6 +472,33 @@ class Ensemble(object):
             bt[key] = self.get_byte() * 0.45
         bt['Gain'] = self.get_byte()
         return bt
+
+    def decode_vmdas_nav(self):
+        '''
+        Decodes VMDAS navigation data block (ID 0x2000).
+        Returns a dictionary with values converted to physical units.
+        '''
+        SEMICIRCLES_TO_DEG = 180.0 / 2**31
+        nav = OrderedDict()
+        # bytes 2-3: UTC day, month
+        self.get_byte() # UTC day
+        self.get_byte() # UTC month
+        self.get_word() # UTC year
+        nav['UTC_Time_First'] = self.get_uint()        # ms since midnight
+        nav['PCClockOffset'] = self.get_sint()         # ms
+        nav['FirstLat'] = self.get_sint() * SEMICIRCLES_TO_DEG  # degrees
+        nav['FirstLon'] = self.get_sint() * SEMICIRCLES_TO_DEG  # degrees
+        nav['UTC_Time_Last'] = self.get_uint()         # ms since midnight
+        nav['LastLat'] = self.get_sint() * SEMICIRCLES_TO_DEG   # degrees
+        nav['LastLon'] = self.get_sint() * SEMICIRCLES_TO_DEG   # degrees
+        nav['AvgSpeed'] = self.get_short() * 1e-3      # mm/s -> m/s
+        nav['AvgTrackTrue'] = self.get_word() * 1e-2   # 0.01 deg -> deg
+        nav['AvgTrackMagnetic'] = self.get_word() * 1e-2  # 0.01 deg -> deg
+        nav['SpeedMadeGood'] = self.get_short() * 1e-3 # mm/s -> m/s
+        nav['DirMadeGood'] = self.get_word() * 1e-2    # 0.01 deg -> deg
+        self.get_word() # reserved
+        nav['Flags'] = self.get_word()
+        return nav
 
     # I thought it this data block would contain some useful information, but it turns out that the DVL
     # (at least) does not output it. This method has not been tested and therefore will raise an error.
